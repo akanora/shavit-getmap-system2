@@ -6,17 +6,21 @@
 #pragma semicolon 1
 #pragma newdecls required
 
-Convar           gCV_PublicURL      = null;
-Convar           gCV_MapsPath       = null;
-Convar           gCV_FastDLPath     = null;
-Convar           gCV_ReplaceMap     = null;
-Convar           gCV_MapPrefix      = null;
-Convar           gCV_DeleteBZ2After = null;
-Convar           gCV_7ZipBinary     = null;
-Convar           gCV_MapListURL     = null;
+Convar           gCV_PublicURL            = null;
+Convar           gCV_MapsPath             = null;
+Convar           gCV_FastDLPath           = null;
+Convar           gCV_ReplaceMap           = null;
+Convar           gCV_MapPrefix            = null;
+Convar           gCV_DeleteBZ2After       = null;
+Convar           gCV_7ZipBinary           = null;
+Convar           gCV_MapListURL           = null;
+Convar           gCV_SjTieredMapListURL   = null;
 
-ArrayList        g_aMapList         = null;
-bool             g_bMapListLoaded   = false;
+ArrayList        g_aMapList               = null;
+bool             g_bMapListLoaded         = false;
+
+ArrayList        g_aSjTieredMapList       = null;
+bool             g_bSjTieredMapListLoaded = false;
 
 char             gS_PublicURL[PLATFORM_MAX_PATH];
 char             gS_MapPath[PLATFORM_MAX_PATH];
@@ -41,24 +45,28 @@ public void OnPluginStart()
     RegAdminCmd("sm_downloadmap", Command_GetMap, ADMFLAG_CHANGEMAP, "Download a bz2 compressed map file to use in the server");
     RegAdminCmd("sm_delmap", Command_DeleteMap, ADMFLAG_CHANGEMAP, "Delete a map (.bsp and optionally .bz2) from the server.");
 
-    gCV_PublicURL      = new Convar("gm_public_url", "https://main.fastdl.me/maps/", "Replace with a public FastDL URL containing maps for your respective game, the default one is for (cstrike).");
-    gCV_MapsPath       = new Convar("gm_maps_path", "maps/", "Path to where the decompressed map file will go to.");
-    gCV_FastDLPath     = new Convar("gm_fastdl_path", "maps/", "Path to where the compressed map file will go to.");
-    gCV_ReplaceMap     = new Convar("gm_replace_map", "0", "Specifies whether or not to replace the map if it already exists.", _, true, 0.0, true, 1.0);
-    gCV_MapPrefix      = new Convar("gm_map_prefix", "", "Use map prefix before every map name.");
-    gCV_DeleteBZ2After = new Convar("gm_delete_bz2_after", "1", "Whether to delete the .bz2 after decompressing it.", _, true, 0.0, true, 1.0);
-    gCV_7ZipBinary     = new Convar("gm_7zip_binary", "7z", "Path to the 7-zip executable (default '7z'). Change if not in system path.");
-    gCV_MapListURL     = new Convar("gm_map_list_url", "https://main.fastdl.me/maps_index.html.txt", "URL to the plain text file containing the list of available maps.");
+    gCV_PublicURL          = new Convar("gm_public_url", "https://main.fastdl.me/maps/", "Replace with a public FastDL URL containing maps for your respective game, the default one is for (cstrike).");
+    gCV_MapsPath           = new Convar("gm_maps_path", "maps/", "Path to where the decompressed map file will go to.");
+    gCV_FastDLPath         = new Convar("gm_fastdl_path", "maps/", "Path to where the compressed map file will go to.");
+    gCV_ReplaceMap         = new Convar("gm_replace_map", "0", "Specifies whether or not to replace the map if it already exists.", _, true, 0.0, true, 1.0);
+    gCV_MapPrefix          = new Convar("gm_map_prefix", "", "Use map prefix before every map name.");
+    gCV_DeleteBZ2After     = new Convar("gm_delete_bz2_after", "1", "Whether to delete the .bz2 after decompressing it.", _, true, 0.0, true, 1.0);
+    gCV_7ZipBinary         = new Convar("gm_7zip_binary", "7z", "Path to the 7-zip executable (default '7z'). Change if not in system path.");
+    gCV_MapListURL         = new Convar("gm_map_list_url", "https://main.fastdl.me/maps_index.html.txt", "URL to the plain text file containing the list of available maps.");
+    gCV_SjTieredMapListURL = new Convar("gm_sjtiered_map_list_url", "https://lodgegaming.com.tr/sjtieredmaps.txt", "URL to the plain text file containing the list of available tiered maps.");
 
     RegAdminCmd("sm_maplist", Command_MapList, ADMFLAG_CHANGEMAP, "List available maps from FastDL.");
     RegAdminCmd("sm_findmap", Command_FindMap, ADMFLAG_CHANGEMAP, "Search for a map from FastDL.");
     RegAdminCmd("sm_refreshmaplist", Command_RefreshMapList, ADMFLAG_CHANGEMAP, "Force refresh the map list.");
+    RegAdminCmd("sm_sjtieredmaps", Command_SjTieredMaps, ADMFLAG_CHANGEMAP, "List available tiered maps from SourceJump.");
 
-    g_aMapList = new ArrayList(PLATFORM_MAX_PATH);
+    g_aMapList         = new ArrayList(PLATFORM_MAX_PATH);
+    g_aSjTieredMapList = new ArrayList(PLATFORM_MAX_PATH);
 
     AutoExecConfig(true, "shavit-getmap-system2");
 
     DownloadMapList();
+    DownloadSjTieredMapList();
 }
 
 public void Shavit_OnChatConfigLoaded()
@@ -536,6 +544,137 @@ public Action Command_FindMap(int client, int args)
 }
 
 public int MenuHandler_MapList(Menu menu, MenuAction action, int param1, int param2)
+{
+    if (action == MenuAction_Select)
+    {
+        char mapName[PLATFORM_MAX_PATH];
+        menu.GetItem(param2, mapName, sizeof(mapName));
+
+        // Trigger download
+        FakeClientCommand(param1, "sm_getmap %s", mapName);
+    }
+    else if (action == MenuAction_End)
+    {
+        delete menu;
+    }
+    return 0;
+}
+
+void DownloadSjTieredMapList(int client = 0)
+{
+    char url[1024];
+    gCV_SjTieredMapListURL.GetString(url, sizeof(url));
+
+    if (url[0] == '\0') return;
+
+    if (client != 0)
+    {
+        Shavit_PrintToChat(client, "%sRefreshing tiered map list...", gS_ChatStrings.sText);
+    }
+
+    System2HTTPRequest request = new System2HTTPRequest(OnSjTieredMapListDownloaded, url);
+    char               path[PLATFORM_MAX_PATH];
+    BuildPath(Path_SM, path, sizeof(path), "data/sourcejump-tiered-map-list.txt");
+    request.SetOutputFile(path);
+    request.Any = client;
+    request.GET();
+}
+
+void OnSjTieredMapListDownloaded(bool success, const char[] error, System2HTTPRequest request, System2HTTPResponse response, HTTPRequestMethod method)
+{
+    int client = request.Any;
+    delete request;
+
+    if (success && response.StatusCode == 200)
+    {
+        ParseSjTieredMapList(client);
+    }
+    else
+    {
+        if (client != 0)
+        {
+            Shavit_PrintToChat(client, "%sFailed to download tiered map list. Status: %d. Error: %s", gS_ChatStrings.sText, response.StatusCode, error);
+        }
+        LogError("GetMap: Failed to download tiered map list. Status: %d. Error: %s", response.StatusCode, error);
+    }
+}
+
+void ParseSjTieredMapList(int client)
+{
+    char path[PLATFORM_MAX_PATH];
+    BuildPath(Path_SM, path, sizeof(path), "data/sourcejump-tiered-map-list.txt");
+
+    File file = OpenFile(path, "r");
+    if (file == null)
+    {
+        if (client != 0) Shavit_PrintToChat(client, "%sError opening tiered map list file.", gS_ChatStrings.sText);
+        return;
+    }
+
+    g_aSjTieredMapList.Clear();
+
+    char line[PLATFORM_MAX_PATH];
+    while (!file.EndOfFile() && file.ReadLine(line, sizeof(line)))
+    {
+        TrimString(line);
+        if (line[0] != '\0')
+        {
+            g_aSjTieredMapList.PushString(line);
+        }
+    }
+    delete file;
+    g_bSjTieredMapListLoaded = true;
+
+    if (client != 0)
+    {
+        Shavit_PrintToChat(client, "%sTiered map list refreshed. %d maps found.", gS_ChatStrings.sText, g_aSjTieredMapList.Length);
+    }
+}
+
+public Action Command_SjTieredMaps(int client, int args)
+{
+    if (!g_bSjTieredMapListLoaded)
+    {
+        Shavit_PrintToChat(client, "%sTiered map list is not loaded yet. Trying to download...", gS_ChatStrings.sText);
+        DownloadSjTieredMapList(client);
+        return Plugin_Handled;
+    }
+
+    if (g_aSjTieredMapList.Length == 0)
+    {
+        Shavit_PrintToChat(client, "%sTiered map list is empty.", gS_ChatStrings.sText);
+        return Plugin_Handled;
+    }
+
+    Menu menu  = new Menu(MenuHandler_SjTieredMapList);
+
+    int  count = 0;
+    for (int i = 0; i < g_aSjTieredMapList.Length; i++)
+    {
+        char mapName[PLATFORM_MAX_PATH];
+        g_aSjTieredMapList.GetString(i, mapName, sizeof(mapName));
+
+        if (IsMapInstalled(mapName)) continue;
+
+        menu.AddItem(mapName, mapName);
+        count++;
+    }
+
+    if (count == 0)
+    {
+        Shavit_PrintToChat(client, "%sAll cached tiered maps are already installed.", gS_ChatStrings.sText);
+        delete menu;
+    }
+    else
+    {
+        menu.SetTitle("GetMap - Available Tiered Maps (%d)", count);
+        menu.Display(client, MENU_TIME_FOREVER);
+    }
+
+    return Plugin_Handled;
+}
+
+public int MenuHandler_SjTieredMapList(Menu menu, MenuAction action, int param1, int param2)
 {
     if (action == MenuAction_Select)
     {
