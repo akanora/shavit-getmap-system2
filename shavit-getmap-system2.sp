@@ -109,6 +109,7 @@ public Action Command_GetMap(int client, int args)
         return Plugin_Handled;
     }
 
+    char endPoint[PLATFORM_MAX_PATH];
     char fullURL[2048];
 
     if (StrContains(mapName, gS_MapPrefix, false) == -1)
