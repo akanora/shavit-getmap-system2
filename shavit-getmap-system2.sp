@@ -176,7 +176,7 @@ void OnMapFileDownloaded(bool success, const char[] error, System2HTTPRequest re
     char outDir[PLATFORM_MAX_PATH];
     strcopy(outDir, sizeof(outDir), mapPath);
     int len = strlen(outDir);
-    if (len > 0 && outDir[len - 1] == '/')
+    if (len > 0 && (outDir[len - 1] == '/' || outDir[len - 1] == '\\'))
     {
         outDir[len - 1] = '\0';
     }
