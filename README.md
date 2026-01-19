@@ -30,6 +30,7 @@ This plugin requires the following dependencies to function correctly:
 *   `gm_delete_bz2_after` - Whether to delete the .bz2 after decompressing it (default: `1`).
 *   `gm_7zip_binary` - Path to the 7-zip executable (default: `7z`).
 *   `gm_map_list_url` - URL to the plain text file containing the list of available maps. (default: `https://main.fastdl.me/maps_index.html.txt`)
+*   `gm_sjtiered_map_list_url` - URL to the plain text file containing the list of available tiered maps. (default: `https://lodgegaming.com.tr/sjtieredmaps.txt`)
 
 ## Commands
 
@@ -37,3 +38,4 @@ This plugin requires the following dependencies to function correctly:
 *   `sm_maplist` - List available maps from FastDL.
 *   `sm_findmap <partial name>` - Search for a map.
 *   `sm_delmap <mapname>` - Delete a map.
+*   `sm_sjtieredmaps` - List available tiered maps from SourceJump.
