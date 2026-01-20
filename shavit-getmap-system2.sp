@@ -15,12 +15,16 @@ Convar           gCV_DeleteBZ2After       = null;
 Convar           gCV_7ZipBinary           = null;
 Convar           gCV_MapListURL           = null;
 Convar           gCV_SjTieredMapListURL   = null;
+Convar           gCV_BrokenMapListURL     = null;
 
 ArrayList        g_aMapList               = null;
 bool             g_bMapListLoaded         = false;
 
 ArrayList        g_aSjTieredMapList       = null;
 bool             g_bSjTieredMapListLoaded = false;
+
+ArrayList        g_aBrokenMapList         = null;
+bool             g_bBrokenMapListLoaded   = false;
 
 char             gS_PublicURL[PLATFORM_MAX_PATH];
 char             gS_MapPath[PLATFORM_MAX_PATH];
@@ -54,6 +58,7 @@ public void OnPluginStart()
     gCV_7ZipBinary         = new Convar("gm_7zip_binary", "7z", "Path to the 7-zip executable (default '7z'). Change if not in system path.");
     gCV_MapListURL         = new Convar("gm_map_list_url", "https://main.fastdl.me/maps_index.html.txt", "URL to the plain text file containing the list of available maps.");
     gCV_SjTieredMapListURL = new Convar("gm_sjtiered_map_list_url", "https://lodgegaming.com.tr/sjtieredmaps.txt", "URL to the plain text file containing the list of available tiered maps.");
+    gCV_BrokenMapListURL   = new Convar("gm_broken_map_list_url", "https://lodgegaming.com.tr/brokenmaps.txt", "URL to the plain text file containing the list of broken maps to hide.");
 
     RegAdminCmd("sm_maplist", Command_MapList, ADMFLAG_CHANGEMAP, "List available maps from FastDL.");
     RegAdminCmd("sm_findmap", Command_FindMap, ADMFLAG_CHANGEMAP, "Search for a map from FastDL.");
@@ -62,11 +67,13 @@ public void OnPluginStart()
 
     g_aMapList         = new ArrayList(PLATFORM_MAX_PATH);
     g_aSjTieredMapList = new ArrayList(PLATFORM_MAX_PATH);
+    g_aBrokenMapList   = new ArrayList(PLATFORM_MAX_PATH);
 
     AutoExecConfig(true, "shavit-getmap-system2");
 
     DownloadMapList();
     DownloadSjTieredMapList();
+    DownloadBrokenMapList();
 }
 
 public void Shavit_OnChatConfigLoaded()
@@ -381,6 +388,8 @@ void DownloadMapList(int client = 0)
 public Action Command_RefreshMapList(int client, int args)
 {
     DownloadMapList(client);
+    DownloadSjTieredMapList(client);
+    DownloadBrokenMapList(client);
     return Plugin_Handled;
 }
 
@@ -475,6 +484,7 @@ public Action Command_MapList(int client, int args)
         g_aMapList.GetString(i, mapName, sizeof(mapName));
 
         if (IsMapInstalled(mapName)) continue;
+        if (IsMapBroken(mapName)) continue;
 
         menu.AddItem(mapName, mapName);
         count++;
@@ -523,6 +533,7 @@ public Action Command_FindMap(int client, int args)
         if (StrContains(mapName, query, false) != -1)
         {
             if (IsMapInstalled(mapName)) continue;
+            if (IsMapBroken(mapName)) continue;
 
             menu.AddItem(mapName, mapName);
             count++;
@@ -655,6 +666,7 @@ public Action Command_SjTieredMaps(int client, int args)
         g_aSjTieredMapList.GetString(i, mapName, sizeof(mapName));
 
         if (IsMapInstalled(mapName)) continue;
+        if (IsMapBroken(mapName)) continue;
 
         menu.AddItem(mapName, mapName);
         count++;
@@ -689,4 +701,87 @@ public int MenuHandler_SjTieredMapList(Menu menu, MenuAction action, int param1,
         delete menu;
     }
     return 0;
+}
+
+void DownloadBrokenMapList(int client = 0)
+{
+    char url[1024];
+    gCV_BrokenMapListURL.GetString(url, sizeof(url));
+
+    if (url[0] == '\0') return;
+
+    if (client != 0)
+    {
+        Shavit_PrintToChat(client, "%sRefreshing broken map list...", gS_ChatStrings.sText);
+    }
+
+    System2HTTPRequest request = new System2HTTPRequest(OnBrokenMapListDownloaded, url);
+    char               path[PLATFORM_MAX_PATH];
+    BuildPath(Path_SM, path, sizeof(path), "data/shavit-getmap-broken-list.txt");
+    request.SetOutputFile(path);
+    request.Any = client;
+    request.GET();
+}
+
+void OnBrokenMapListDownloaded(bool success, const char[] error, System2HTTPRequest request, System2HTTPResponse response, HTTPRequestMethod method)
+{
+    int client = request.Any;
+    delete request;
+
+    if (success && response.StatusCode == 200)
+    {
+        ParseBrokenMapList(client);
+    }
+    else
+    {
+        if (client != 0)
+        {
+            Shavit_PrintToChat(client, "%sFailed to download broken map list. Status: %d. Error: %s", gS_ChatStrings.sText, response.StatusCode, error);
+        }
+        LogError("GetMap: Failed to download broken map list. Status: %d. Error: %s", response.StatusCode, error);
+    }
+}
+
+void ParseBrokenMapList(int client)
+{
+    char path[PLATFORM_MAX_PATH];
+    BuildPath(Path_SM, path, sizeof(path), "data/shavit-getmap-broken-list.txt");
+
+    File file = OpenFile(path, "r");
+    if (file == null)
+    {
+        if (client != 0) Shavit_PrintToChat(client, "%sError opening broken map list file.", gS_ChatStrings.sText);
+        return;
+    }
+
+    g_aBrokenMapList.Clear();
+
+    char line[PLATFORM_MAX_PATH];
+    while (!file.EndOfFile() && file.ReadLine(line, sizeof(line)))
+    {
+        TrimString(line);
+        if (line[0] != '\0')
+        {
+            g_aBrokenMapList.PushString(line);
+        }
+    }
+    delete file;
+    g_bBrokenMapListLoaded = true;
+
+    if (client != 0)
+    {
+        Shavit_PrintToChat(client, "%sBroken map list refreshed. %d maps found.", gS_ChatStrings.sText, g_aBrokenMapList.Length);
+    }
+}
+
+bool IsMapBroken(const char[] mapName)
+{
+    // If the list isn't loaded or URL is empty (disabled), don't filter anything
+    if (!g_bBrokenMapListLoaded) return false;
+
+    char url[1024];
+    gCV_BrokenMapListURL.GetString(url, sizeof(url));
+    if (url[0] == '\0') return false;
+
+    return g_aBrokenMapList.FindString(mapName) != -1;
 }
